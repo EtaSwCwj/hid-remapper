@@ -13,7 +13,7 @@ add_compile_definitions(MAX_INPUT_STATES=256)
 
 # print the largest RAM consumers after linking (for fitting into 64 KB)
 set_property(GLOBAL APPEND PROPERTY extra_post_build_commands
-    COMMAND sh -c "echo RAMTOP_BEGIN; NM=$(find /root/ncs/toolchains -name arm-zephyr-eabi-nm | head -1); $NM -S --size-sort -r -C ${CMAKE_CURRENT_LIST_DIR}/build/zephyr/zephyr.elf | grep -i ' [bBdD] ' | head -60; echo RAMTOP_END")
+    COMMAND sh ${CMAKE_CURRENT_LIST_DIR}/ramtop.sh)
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 include(${CMAKE_CURRENT_LIST_DIR}/gatt_dm_patch.cmake)
