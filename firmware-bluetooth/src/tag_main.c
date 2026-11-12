@@ -460,8 +460,6 @@ SETTINGS_STATIC_HANDLER_DEFINE(remapper, "remapper", NULL, tag_settings_set, NUL
 static void usb_console_thread_fn(void* p1, void* p2, void* p3) {
     const struct device* console = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
 
-    usb_enable(NULL);
-
     while (true) {
         unsigned char c;
         while (device_is_ready(console) && (uart_poll_in(console, &c) == 0)) {
@@ -476,6 +474,10 @@ K_THREAD_DEFINE(usb_console_thread, 1024, usb_console_thread_fn, NULL, NULL, NUL
 #endif
 
 void main(void) {
+#ifdef CONFIG_USB_DEVICE_STACK
+    usb_enable(NULL);
+#endif
+
     LOG_INF("keyboard relay starting");
 
     io_init();
