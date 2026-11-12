@@ -192,6 +192,10 @@ bool ble_out_host_connected(void) {
     return host_conn != NULL;
 }
 
+bool ble_out_host_known(void) {
+    return host_addr_valid;
+}
+
 void ble_out_connected(struct bt_conn* conn, uint8_t conn_err) {
     if (conn_err) {
         LOG_ERR("host connection failed: %u", conn_err);

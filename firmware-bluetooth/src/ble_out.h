@@ -22,6 +22,8 @@ bool ble_out_is_host(struct bt_conn* conn);
 void ble_out_connected(struct bt_conn* conn, uint8_t conn_err);
 void ble_out_disconnected(struct bt_conn* conn);
 bool ble_out_host_connected(void);
+// True if a host has been paired (whether or not it's connected right now).
+bool ble_out_host_known(void);
 
 // Remember which bond belongs to the host so that the scanner doesn't treat it as an input device.
 void ble_out_remember_host(struct bt_conn* conn);

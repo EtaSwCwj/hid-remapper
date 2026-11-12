@@ -125,6 +125,19 @@ static bool usb_active() {
     return sof_seen && ((k_uptime_get_32() - last_sof_ms) < 200);
 }
 
+// When a Bluetooth host has been paired but isn't connected right now, wait
+// this long before falling back to sending reports over USB, so that a short
+// Bluetooth dropout doesn't send keystrokes to the USB host.
+static const uint32_t USB_FALLBACK_DELAY_MS = 60000;
+static uint32_t host_last_seen_ms = 0;
+
+static bool usb_fallback_allowed() {
+    if (!ble_out_host_known()) {
+        return true;
+    }
+    return (k_uptime_get_32() - host_last_seen_ms) >= USB_FALLBACK_DELAY_MS;
+}
+
 static void tick_timer_fn(struct k_timer* timer) {
     if (!usb_active()) {
         atomic_set_bit(tick_pending, 0);
@@ -779,6 +792,9 @@ static bool do_send_report(uint8_t interface, const uint8_t* report_with_id, uin
     if (!usb_active()) {
         return false;
     }
+    if ((interface == 0) && !usb_fallback_allowed()) {
+        return false;
+    }
     if (interface == 0) {
         return CHK(hid_int_ep_write(hid_dev0, report_with_id, len, NULL));
     }
@@ -1014,6 +1030,9 @@ int main() {
         if (atomic_test_and_clear_bit(tick_pending, 0)) {
             process_mapping(true);
             process_pending = false;
+        }
+        if (ble_out_host_connected()) {
+            host_last_seen_ms = k_uptime_get_32();
         }
         if (!usb_active()) {
             // a USB transfer that was in flight when the host went away will never complete
