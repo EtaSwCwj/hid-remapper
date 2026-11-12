@@ -4,7 +4,7 @@ set(BOARD_ROOT ${CMAKE_CURRENT_LIST_DIR})
 
 # This branch targets nRF52832 coin cell tags. The CI workflow only passes the
 # nRF52840 board names, so the board and configuration are overridden here.
-set(BOARD nrf52dk_nrf52832)
+set(BOARD nrf52dk_nrf52832 CACHE STRING "" FORCE)
 set(CONF_FILE ${CMAKE_CURRENT_LIST_DIR}/prj_tag.conf)
 
 add_compile_definitions(PERSISTED_CONFIG_SIZE=2048)
@@ -30,3 +30,8 @@ target_sources(app PRIVATE
     ${REMAPPER_SRC}/remapper.cc
     ${REMAPPER_SRC}/ps_auth.cc
 )
+
+# print the largest RAM consumers after linking (for fitting into 64 KB)
+add_custom_command(TARGET app POST_BUILD
+    COMMAND sh -c "echo RAMTOP_BEGIN; ${CMAKE_NM} -S --size-sort -r -C ${CMAKE_BINARY_DIR}/zephyr/zephyr_pre0.elf | grep -i ' [bBdD] ' | head -45; echo RAMTOP_END"
+    VERBATIM)
