@@ -1031,6 +1031,17 @@ int main() {
             process_mapping(true);
             process_pending = false;
         }
+        {
+            static uint32_t last_heartbeat_ms = 0;
+            static uint32_t loops = 0;
+            loops++;
+            uint32_t now_ms = k_uptime_get_32();
+            if (now_ms - last_heartbeat_ms >= 5000) {
+                LOG_INF("heartbeat: loops=%u usb_active=%d host_connected=%d host_known=%d", loops, usb_active(), ble_out_host_connected(), ble_out_host_known());
+                last_heartbeat_ms = now_ms;
+                loops = 0;
+            }
+        }
         if (ble_out_host_connected()) {
             host_last_seen_ms = k_uptime_get_32();
             ble_out_poll();
