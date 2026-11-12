@@ -1,5 +1,6 @@
 #include <errno.h>
 #include <stddef.h>
+#include <malloc.h>
 #include <string.h>
 
 #include <bluetooth/gatt_dm.h>
@@ -1037,7 +1038,8 @@ int main() {
             loops++;
             uint32_t now_ms = k_uptime_get_32();
             if (now_ms - last_heartbeat_ms >= 5000) {
-                LOG_INF("heartbeat: loops=%u usb_active=%d host_connected=%d host_known=%d", loops, usb_active(), ble_out_host_connected(), ble_out_host_known());
+                struct mallinfo mi = mallinfo();
+                LOG_INF("heartbeat: loops=%u usb_active=%d host_connected=%d host_known=%d heap_used=%u heap_arena=%u", loops, usb_active(), ble_out_host_connected(), ble_out_host_known(), (unsigned) mi.uordblks, (unsigned) mi.arena);
                 last_heartbeat_ms = now_ms;
                 loops = 0;
             }
