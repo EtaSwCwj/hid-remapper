@@ -2,6 +2,11 @@ cmake_minimum_required(VERSION 3.20.0)
 
 set(BOARD_ROOT ${CMAKE_CURRENT_LIST_DIR})
 
+# This branch targets nRF52832 coin cell tags. The CI workflow only passes the
+# nRF52840 board names, so the board and configuration are overridden here.
+set(BOARD nrf52dk_nrf52832)
+set(CONF_FILE ${CMAKE_CURRENT_LIST_DIR}/prj_tag.conf)
+
 add_compile_definitions(PERSISTED_CONFIG_SIZE=2048)
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})

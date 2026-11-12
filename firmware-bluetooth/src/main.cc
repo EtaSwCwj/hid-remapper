@@ -18,8 +18,10 @@
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/reboot.h>
 #include <zephyr/types.h>
+#ifdef CONFIG_USB_DEVICE_STACK
 #include <zephyr/usb/class/usb_hid.h>
 #include <zephyr/usb/usb_device.h>
+#endif
 
 #include "ble_out.h"
 #include "config.h"
@@ -683,6 +685,7 @@ static struct bt_conn_auth_info_cb conn_auth_info_callbacks = {
     .pairing_failed = pairing_failed
 };
 
+#ifdef CONFIG_USB_DEVICE_STACK
 static int set_report_cb(const struct device* dev, struct usb_setup_packet* setup, int32_t* len, uint8_t** data) {
     uint8_t request_value[2];
 
@@ -775,6 +778,8 @@ static const struct hid_ops ops1 = {
     .int_in_ready = int_in_ready_cb1,
 };
 
+#endif  // CONFIG_USB_DEVICE_STACK
+
 static bool do_send_report(uint8_t interface, const uint8_t* report_with_id, uint8_t len) {
     if (report_with_id[0] == 0) {
         report_with_id++;
@@ -795,12 +800,14 @@ static bool do_send_report(uint8_t interface, const uint8_t* report_with_id, uin
     if ((interface == 0) && !usb_fallback_allowed()) {
         return false;
     }
+#ifdef CONFIG_USB_DEVICE_STACK
     if (interface == 0) {
         return CHK(hid_int_ep_write(hid_dev0, report_with_id, len, NULL));
     }
     if (interface == 1) {
         return CHK(hid_int_ep_write(hid_dev1, report_with_id, len, NULL));
     }
+#endif
     return false;
 }
 
@@ -838,6 +845,7 @@ static void leds_init() {
     }
 }
 
+#ifdef CONFIG_USB_DEVICE_STACK
 static void status_cb(enum usb_dc_status_code status, const uint8_t* param) {
     if (status == USB_DC_SOF) {
         last_sof_ms = k_uptime_get_32();
@@ -848,15 +856,20 @@ static void status_cb(enum usb_dc_status_code status, const uint8_t* param) {
 
 extern struct usb_device_descriptor __usb_descriptor_start[];
 
+#endif  // CONFIG_USB_DEVICE_STACK
+
 static void descriptor_init() {
     our_descriptor = &our_descriptors[our_descriptor_number];
+#ifdef CONFIG_USB_DEVICE_STACK
     if ((our_descriptor->vid != 0) && (our_descriptor->pid != 0)) {
         struct usb_device_descriptor* device_descriptor = __usb_descriptor_start;
         device_descriptor->idVendor = our_descriptor->vid;
         device_descriptor->idProduct = our_descriptor->pid;
     }
+#endif
 }
 
+#ifdef CONFIG_USB_DEVICE_STACK
 static void usb_init() {
     hid_dev0 = device_get_binding("HID_0");
     if (hid_dev0 == NULL) {
@@ -876,6 +889,8 @@ static void usb_init() {
     CHK(usb_hid_init(hid_dev1));
     CHK(usb_enable(status_cb));
 }
+
+#endif  // CONFIG_USB_DEVICE_STACK
 
 static void bt_init() {
     for (int i = 0; i < CONFIG_BT_MAX_CONN; i++) {
@@ -1005,7 +1020,9 @@ int main() {
     CHK(settings_register(&our_settings_handlers));
     settings_load();
     descriptor_init();
+#ifdef CONFIG_USB_DEVICE_STACK
     usb_init();
+#endif
     scan_init();
     parse_our_descriptor();
     set_mapping_from_config();
