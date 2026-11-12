@@ -115,8 +115,9 @@ static bool scanning = false;
 static bool peers_only = true;
 
 // USB is considered active while start-of-frame packets keep coming in.
-// When it isn't (for example when powered from a battery), reports go out
-// over Bluetooth instead and a timer drives the processing tick.
+// When it isn't (for example when powered from a battery), a timer drives
+// the processing tick. Reports go to the Bluetooth host if one is connected
+// and to USB otherwise.
 static volatile uint32_t last_sof_ms = 0;
 static volatile bool sof_seen = false;
 
@@ -766,12 +767,16 @@ static bool do_send_report(uint8_t interface, const uint8_t* report_with_id, uin
         report_with_id++;
         len--;
     }
-    if (!usb_active()) {
-        // No USB host: send keyboard and consumer reports over Bluetooth.
+    if ((interface == 0) && ble_out_host_connected()) {
+        // A Bluetooth host is connected: keyboard and consumer reports go there,
+        // even if we're also plugged into a USB host.
         // Returning false tells the caller there's no USB transfer to wait for.
-        if ((interface == 0) && (len > 1)) {
+        if (len > 1) {
             ble_out_send(report_with_id[0], report_with_id + 1, len - 1);
         }
+        return false;
+    }
+    if (!usb_active()) {
         return false;
     }
     if (interface == 0) {
