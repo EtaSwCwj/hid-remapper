@@ -28,6 +28,7 @@
 #include <zephyr/usb/usb_device.h>
 #endif
 
+#include "battery.h"
 #include "ble_out.h"
 #include "hid_parse.h"
 #include "remap.h"
@@ -64,6 +65,12 @@ static int64_t button_pressed_at;
 
 static void scan_start_work_fn(struct k_work* work);
 static K_WORK_DELAYABLE_DEFINE(scan_start_work, scan_start_work_fn);
+static void scan_slow_work_fn(struct k_work* work);
+static K_WORK_DELAYABLE_DEFINE(scan_slow_work, scan_slow_work_fn);
+static bool scan_slow;
+static const struct bt_le_scan_param scan_param_fast;
+
+#define SCAN_FAST_PERIOD K_MINUTES(3)
 
 // --- LED: lit while a new keyboard can be paired, short blink on events ---
 
@@ -136,8 +143,12 @@ static void scan_start_work_fn(struct k_work* work) {
         return;
     }
 
+    CHK(bt_scan_params_set((struct bt_le_scan_param*) &scan_param_fast));
+    scan_slow = false;
+
     if (CHK(bt_scan_start(BT_SCAN_TYPE_SCAN_PASSIVE))) {
         scanning = true;
+        k_work_reschedule(&scan_slow_work, SCAN_FAST_PERIOD);
     }
 
     led_update();
@@ -172,18 +183,41 @@ static void scan_filter_no_match(struct bt_scan_device_info* device_info, bool c
 
 BT_SCAN_CB_INIT(scan_cb, scan_filter_match, scan_filter_no_match, scan_connecting_error, scan_connecting);
 
-static void scan_init(void) {
-    // Listen 30 ms out of every 200 ms: the keyboard is found within a second
-    // or so without keeping the radio on all the time.
-    static const struct bt_le_scan_param scan_param = {
-        .type = BT_LE_SCAN_TYPE_PASSIVE,
-        .options = BT_LE_SCAN_OPT_NONE,
-        .interval = 0x0140,
-        .window = 0x0030,
-    };
+// Fast: listen 30 ms out of every 200 ms, the keyboard is found within a
+// second or so. Slow: 30 ms out of every 1.28 s, used once the keyboard has
+// been away for a while (it's switched off or asleep), to save the battery.
+static const struct bt_le_scan_param scan_param_fast = {
+    .type = BT_LE_SCAN_TYPE_PASSIVE,
+    .options = BT_LE_SCAN_OPT_NONE,
+    .interval = 0x0140,
+    .window = 0x0030,
+};
 
+static const struct bt_le_scan_param scan_param_slow = {
+    .type = BT_LE_SCAN_TYPE_PASSIVE,
+    .options = BT_LE_SCAN_OPT_NONE,
+    .interval = 0x0800,
+    .window = 0x0030,
+};
+
+static void scan_slow_work_fn(struct k_work* work) {
+    if (!scanning || !peers_only) {
+        return;
+    }
+    if (CHK(bt_scan_stop())) {
+        scanning = false;
+        CHK(bt_scan_params_set((struct bt_le_scan_param*) &scan_param_slow));
+        if (CHK(bt_scan_start(BT_SCAN_TYPE_SCAN_PASSIVE))) {
+            scanning = true;
+            scan_slow = true;
+            LOG_INF("keyboard not around, scanning slowly");
+        }
+    }
+}
+
+static void scan_init(void) {
     struct bt_scan_init_param scan_init_param = {
-        .scan_param = &scan_param,
+        .scan_param = &scan_param_fast,
         .connect_if_match = 1,
         .conn_param = &conn_param,
     };
@@ -471,8 +505,9 @@ static void usb_console_thread_fn(void* p1, void* p2, void* p3) {
         }
         if (++ticks >= 25) {
             ticks = 0;
-            LOG_INF("status: keyboard=%d host=%d host_known=%d scanning=%d peers_only=%d uptime=%us",
-                    keyboard_conn != NULL, ble_out_host_connected(), ble_out_host_known(), scanning, peers_only,
+            LOG_INF("status: keyboard=%d host=%d host_known=%d scanning=%d slow=%d peers_only=%d batt=%umV/%u%% uptime=%us",
+                    keyboard_conn != NULL, ble_out_host_connected(), ble_out_host_known(), scanning, scan_slow, peers_only,
+                    battery_millivolts(), battery_percent(),
                     (unsigned) (k_uptime_get() / 1000));
         }
         k_msleep(200);
@@ -500,6 +535,7 @@ void main(void) {
     }
 
     ble_out_init();
+    battery_init();
 
     settings_load();
 

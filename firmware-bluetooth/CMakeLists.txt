@@ -7,7 +7,7 @@ set(BOARD_ROOT ${CMAKE_CURRENT_LIST_DIR})
 # check that the firmware fits the coin cell tags.
 if(BOARD STREQUAL "adafruit_feather_nrf52840")
     set(BOARD nrf52dk_nrf52832 CACHE STRING "" FORCE)
-    set(CONF_FILE ${CMAKE_CURRENT_LIST_DIR}/prj_tag.conf)
+    set(CONF_FILE "${CMAKE_CURRENT_LIST_DIR}/prj_tag.conf;${CMAKE_CURRENT_LIST_DIR}/tag.conf")
 else()
     set(CONF_FILE "${CMAKE_CURRENT_LIST_DIR}/prj_tag.conf;${CMAKE_CURRENT_LIST_DIR}/xiao.conf")
 endif()
@@ -35,6 +35,7 @@ project(NONE)
 target_sources(app PRIVATE
     src/tag_main.c
     src/ble_out.c
+    src/battery.c
     src/hid_parse.c
     src/remap.c
 )

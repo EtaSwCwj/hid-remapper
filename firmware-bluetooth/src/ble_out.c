@@ -126,16 +126,41 @@ static const struct bt_data sd[] = {
 static void adv_work_fn(struct k_work* work);
 static K_WORK_DELAYABLE_DEFINE(adv_work, adv_work_fn);
 
+// Advertise quickly for a while so the host reconnects at once, then slowly
+// (about once a second) so that waiting for an absent host costs very little.
+#define ADV_FAST_PERIOD K_MINUTES(3)
+#define ADV_SLOW BT_LE_ADV_PARAM(BT_LE_ADV_OPT_CONNECTABLE, BT_GAP_ADV_SLOW_INT_MIN, BT_GAP_ADV_SLOW_INT_MAX, NULL)
+
+static void adv_slow_work_fn(struct k_work* work);
+static K_WORK_DELAYABLE_DEFINE(adv_slow_work, adv_slow_work_fn);
+
 static void adv_work_fn(struct k_work* work) {
     if (host_conn != NULL) {
         return;
     }
 
+    bt_le_adv_stop();
     int err = bt_le_adv_start(BT_LE_ADV_CONN, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
     if (err == 0) {
         LOG_INF("advertising as keyboard");
+        k_work_reschedule(&adv_slow_work, ADV_FAST_PERIOD);
     } else if (err != -EALREADY) {
         LOG_ERR("bt_le_adv_start failed: %d", err);
+        k_work_reschedule(&adv_work, K_SECONDS(2));
+    }
+}
+
+static void adv_slow_work_fn(struct k_work* work) {
+    if (host_conn != NULL) {
+        return;
+    }
+
+    bt_le_adv_stop();
+    int err = bt_le_adv_start(ADV_SLOW, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
+    if (err == 0) {
+        LOG_INF("host not around, advertising slowly");
+    } else {
+        LOG_ERR("slow bt_le_adv_start failed: %d", err);
         k_work_reschedule(&adv_work, K_SECONDS(2));
     }
 }
