@@ -17,6 +17,7 @@ if(NOT "${_cdc_acm_patched}" STREQUAL "${_cdc_acm_content}")
 else()
     message(WARNING "cdc_acm.c not patched")
 endif()
+include(${CMAKE_CURRENT_LIST_DIR}/gatt_dm_patch.cmake)
 project(NONE)
 
 set(REMAPPER_SRC ../firmware/src)
