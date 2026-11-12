@@ -5,6 +5,7 @@ set(BOARD_ROOT ${CMAKE_CURRENT_LIST_DIR})
 add_compile_definitions(PERSISTED_CONFIG_SIZE=2048)
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+include(${CMAKE_CURRENT_LIST_DIR}/gatt_dm_patch.cmake)
 project(NONE)
 
 set(REMAPPER_SRC ../firmware/src)
