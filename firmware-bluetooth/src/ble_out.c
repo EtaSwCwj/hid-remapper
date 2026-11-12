@@ -106,6 +106,10 @@ static const uint8_t report_map[] = {
 BUILD_ASSERT(sizeof(report_map) <= 255, "BLE report map too long");
 
 static struct bt_conn* host_conn;
+static atomic_t in_flight = ATOMIC_INIT(0);
+
+static uint8_t pending_data[2][KEYBOARD_REPORT_SIZE];
+static bool pending[2];
 static bt_addr_le_t host_addr;
 static bool host_addr_valid;
 
@@ -209,6 +213,9 @@ void ble_out_connected(struct bt_conn* conn, uint8_t conn_err) {
         bt_conn_unref(host_conn);
     }
     host_conn = bt_conn_ref(conn);
+    atomic_set(&in_flight, 0);
+    pending[0] = false;
+    pending[1] = false;
 
     int err = bt_hids_connected(&hids_obj, conn);
     if (err) {
@@ -266,9 +273,47 @@ void ble_out_forget_host(void) {
     settings_delete("remapper/host");
 }
 
+// bt_hids_inp_rep_send() blocks when the stack runs out of TX buffers, which
+// would stall the main loop. So we only keep a few notifications in flight
+// and remember the latest report of each kind to send once there's room.
+#define MAX_IN_FLIGHT 3
+
+static const uint8_t report_sizes_by_idx[2] = { KEYBOARD_REPORT_SIZE, CONSUMER_REPORT_SIZE };
+
+static void notify_complete_cb(struct bt_conn* conn, void* user_data) {
+    if (atomic_get(&in_flight) > 0) {
+        atomic_dec(&in_flight);
+    }
+}
+
+static bool try_send(uint8_t idx, const uint8_t* data) {
+    if (atomic_get(&in_flight) >= MAX_IN_FLIGHT) {
+        return false;
+    }
+
+    atomic_inc(&in_flight);
+    int err = bt_hids_inp_rep_send(&hids_obj, host_conn, idx, data, report_sizes_by_idx[idx], notify_complete_cb);
+    if (err) {
+        atomic_dec(&in_flight);
+        // not subscribed yet or similar; nothing to retry
+    }
+    return true;
+}
+
+void ble_out_poll(void) {
+    if (host_conn == NULL) {
+        return;
+    }
+
+    for (uint8_t idx = 0; idx < 2; idx++) {
+        if (pending[idx] && try_send(idx, pending_data[idx])) {
+            pending[idx] = false;
+        }
+    }
+}
+
 bool ble_out_send(uint8_t report_id, const uint8_t* data, uint8_t len) {
     uint8_t idx;
-    uint8_t size;
 
     if (host_conn == NULL) {
         return false;
@@ -277,19 +322,23 @@ bool ble_out_send(uint8_t report_id, const uint8_t* data, uint8_t len) {
     switch (report_id) {
         case REPORT_ID_KEYBOARD:
             idx = KEYBOARD_REPORT_IDX;
-            size = KEYBOARD_REPORT_SIZE;
             break;
         case REPORT_ID_CONSUMER:
             idx = CONSUMER_REPORT_IDX;
-            size = CONSUMER_REPORT_SIZE;
             break;
         default:
             return false;
     }
 
-    if (len != size) {
+    if (len != report_sizes_by_idx[idx]) {
         return false;
     }
 
-    return bt_hids_inp_rep_send(&hids_obj, host_conn, idx, data, len, NULL) == 0;
+    if (pending[idx] || !try_send(idx, data)) {
+        // keep only the latest state; it's sent from ble_out_poll()
+        memcpy(pending_data[idx], data, len);
+        pending[idx] = true;
+    }
+
+    return true;
 }

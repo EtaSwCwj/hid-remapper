@@ -1033,6 +1033,7 @@ int main() {
         }
         if (ble_out_host_connected()) {
             host_last_seen_ms = k_uptime_get_32();
+            ble_out_poll();
         }
         if (!usb_active()) {
             // a USB transfer that was in flight when the host went away will never complete

@@ -32,6 +32,8 @@ bool ble_out_is_host_addr(const bt_addr_le_t* addr);
 void ble_out_forget_host(void);
 
 bool ble_out_send(uint8_t report_id, const uint8_t* data, uint8_t len);
+// Call regularly from the main loop: sends reports that had to wait.
+void ble_out_poll(void);
 
 #ifdef __cplusplus
 }
