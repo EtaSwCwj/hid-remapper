@@ -1,5 +1,6 @@
 #include <errno.h>
 #include <stddef.h>
+#include <string.h>
 
 #include <bluetooth/gatt_dm.h>
 #include <bluetooth/scan.h>
@@ -20,6 +21,7 @@
 #include <zephyr/usb/class/usb_hid.h>
 #include <zephyr/usb/usb_device.h>
 
+#include "ble_out.h"
 #include "config.h"
 #include "descriptor_parser.h"
 #include "globals.h"
@@ -112,6 +114,23 @@ static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
 static bool scanning = false;
 static bool peers_only = true;
 
+// USB is considered active while start-of-frame packets keep coming in.
+// When it isn't (for example when powered from a battery), reports go out
+// over Bluetooth instead and a timer drives the processing tick.
+static volatile uint32_t last_sof_ms = 0;
+static volatile bool sof_seen = false;
+
+static bool usb_active() {
+    return sof_seen && ((k_uptime_get_32() - last_sof_ms) < 200);
+}
+
+static void tick_timer_fn(struct k_timer* timer) {
+    if (!usb_active()) {
+        atomic_set_bit(tick_pending, 0);
+    }
+}
+static K_TIMER_DEFINE(tick_timer, tick_timer_fn, NULL);
+
 static struct bt_le_conn_param* conn_param = BT_LE_CONN_PARAM(6, 6, 44, 400);
 
 static void activity_led_off_work_fn(struct k_work* work) {
@@ -191,6 +210,10 @@ static void process_bond(const struct bt_bond_info* info, void* user_data) {
     char addr_str[BT_ADDR_LE_STR_LEN];
     bt_addr_le_to_str(&info->addr, addr_str, sizeof(addr_str));
     LOG_DBG("%s", addr_str);
+    if (ble_out_is_host_addr(&info->addr)) {
+        // this bond is the host we're a keyboard for, not an input device
+        return;
+    }
     (*((int*) user_data))++;
     CHK(bt_scan_filter_add(BT_SCAN_FILTER_TYPE_ADDR, &info->addr));
 }
@@ -199,11 +222,21 @@ static void count_conn_cb(struct bt_conn* conn, void* data) {
     (*((int*) data))++;
 }
 
+static void count_input_conn_cb(struct bt_conn* conn, void* data) {
+    if (!ble_out_is_host(conn)) {
+        (*((int*) data))++;
+    }
+}
+
+// Returns the number of connected input devices. The LED blinks once for
+// every connection, including the one to the host.
 static int count_connections() {
     int conn_count = 0;
+    int input_conn_count = 0;
     bt_conn_foreach(BT_CONN_TYPE_LE, count_conn_cb, &conn_count);
+    bt_conn_foreach(BT_CONN_TYPE_LE, count_input_conn_cb, &input_conn_count);
     atomic_set(&led_blink_count, conn_count);
-    return conn_count;
+    return input_conn_count;
 }
 
 static bool scan_setup_filters() {
@@ -264,6 +297,7 @@ static void disconnect_conn(struct bt_conn* conn, void* data) {
 
 static void clear_bonds_work_fn(struct k_work* work) {
     if (CHK(bt_unpair(BT_ID_DEFAULT, &BT_ADDR_LE_ANY_))) {
+        ble_out_forget_host();
         LOG_INF("Bonds cleared.");
     } else {
         return;
@@ -394,6 +428,12 @@ static void button_cb(const struct device* dev, struct gpio_callback* cb, uint32
 static void connected(struct bt_conn* conn, uint8_t conn_err) {
     char addr[BT_ADDR_LE_STR_LEN];
 
+    if (ble_out_is_host(conn)) {
+        ble_out_connected(conn, conn_err);
+        count_connections();
+        return;
+    }
+
     scanning = false;
     count_connections();
     set_led_mode(LedMode::BLINK);
@@ -419,6 +459,12 @@ static void disconnected(struct bt_conn* conn, uint8_t reason) {
 
     LOG_INF("%s (reason=%u)", addr, reason);
 
+    if (ble_out_is_host(conn)) {
+        ble_out_disconnected(conn);
+        count_connections();
+        return;
+    }
+
     uint8_t conn_idx = bt_conn_index(conn);
 
     if (bt_hogp_assign_check(&hogps[conn_idx])) {
@@ -437,6 +483,11 @@ static void security_changed(struct bt_conn* conn, bt_security_t level, enum bt_
     char addr[BT_ADDR_LE_STR_LEN];
 
     bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+
+    if (ble_out_is_host(conn)) {
+        LOG_INF("host %s, level=%u, err=%d", addr, level, err);
+        return;
+    }
 
     if (!err) {
         LOG_INF("%s, level=%u.", addr, level);
@@ -598,6 +649,9 @@ static void pairing_complete(struct bt_conn* conn, bool bonded) {
     char addr[BT_ADDR_LE_STR_LEN];
     bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
     LOG_INF("%s, bonded=%d", addr, bonded);
+    if (bonded && ble_out_is_host(conn)) {
+        ble_out_remember_host(conn);
+    }
 }
 
 static void pairing_failed(struct bt_conn* conn, enum bt_security_err reason) {
@@ -712,12 +766,21 @@ static bool do_send_report(uint8_t interface, const uint8_t* report_with_id, uin
         report_with_id++;
         len--;
     }
+    if (!usb_active()) {
+        // No USB host: send keyboard and consumer reports over Bluetooth.
+        // Returning false tells the caller there's no USB transfer to wait for.
+        if ((interface == 0) && (len > 1)) {
+            ble_out_send(report_with_id[0], report_with_id + 1, len - 1);
+        }
+        return false;
+    }
     if (interface == 0) {
         return CHK(hid_int_ep_write(hid_dev0, report_with_id, len, NULL));
     }
     if (interface == 1) {
         return CHK(hid_int_ep_write(hid_dev1, report_with_id, len, NULL));
     }
+    return false;
 }
 
 static void button_init() {
@@ -756,6 +819,8 @@ static void leds_init() {
 
 static void status_cb(enum usb_dc_status_code status, const uint8_t* param) {
     if (status == USB_DC_SOF) {
+        last_sof_ms = k_uptime_get_32();
+        sof_seen = true;
         atomic_set_bit(tick_pending, 0);
     }
 }
@@ -811,6 +876,14 @@ static int remapper_settings_set(const char* name, size_t len, settings_read_cb 
     LOG_INF("len=%d", len);
 
     static uint8_t buffer[PERSISTED_CONFIG_SIZE];
+
+    if (strcmp(name, "host") == 0) {
+        bt_addr_le_t host_addr;
+        if ((len == sizeof(host_addr)) && (read_cb(cb_arg, &host_addr, sizeof(host_addr)) == sizeof(host_addr))) {
+            ble_out_set_host_addr(&host_addr);
+        }
+        return 0;
+    }
 
     if (len != PERSISTED_CONFIG_SIZE) {
         return -EINVAL;
@@ -906,6 +979,7 @@ int main() {
     button_init();
     leds_init();
     bt_init();
+    ble_out_init();
     CHK(settings_subsys_init());
     CHK(settings_register(&our_settings_handlers));
     settings_load();
@@ -916,6 +990,8 @@ int main() {
     set_mapping_from_config();
 
     k_work_reschedule(&scan_start_work, K_MSEC(SCAN_DELAY_MS));
+    ble_out_adv_start();
+    k_timer_start(&tick_timer, K_MSEC(1), K_MSEC(1));
 
     struct report_type incoming_report;
     struct descriptor_type incoming_descriptor;
@@ -933,6 +1009,11 @@ int main() {
         if (atomic_test_and_clear_bit(tick_pending, 0)) {
             process_mapping(true);
             process_pending = false;
+        }
+        if (!usb_active()) {
+            // a USB transfer that was in flight when the host went away will never complete
+            k_sem_give(&usb_sem0);
+            k_sem_give(&usb_sem1);
         }
         if (!k_sem_take(&usb_sem0, K_NO_WAIT)) {
             if (!send_report(do_send_report)) {
