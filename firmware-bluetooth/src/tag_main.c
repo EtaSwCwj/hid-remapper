@@ -460,12 +460,20 @@ SETTINGS_STATIC_HANDLER_DEFINE(remapper, "remapper", NULL, tag_settings_set, NUL
 static void usb_console_thread_fn(void* p1, void* p2, void* p3) {
     const struct device* console = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
 
+    int ticks = 0;
+
     while (true) {
         unsigned char c;
         while (device_is_ready(console) && (uart_poll_in(console, &c) == 0)) {
             if (c == 'B') {
                 sys_reboot(DFU_MAGIC_UF2_RESET);
             }
+        }
+        if (++ticks >= 25) {
+            ticks = 0;
+            LOG_INF("status: keyboard=%d host=%d host_known=%d scanning=%d peers_only=%d uptime=%us",
+                    keyboard_conn != NULL, ble_out_host_connected(), ble_out_host_known(), scanning, peers_only,
+                    (unsigned) (k_uptime_get() / 1000));
         }
         k_msleep(200);
     }
