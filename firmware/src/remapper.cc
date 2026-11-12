@@ -79,7 +79,9 @@ uint8_t or_items = 0;
 
 std::vector<uint8_t> report_ids;
 
+#ifndef MAX_INPUT_STATES
 #define MAX_INPUT_STATES 1024
+#endif
 #define PREV_STATE_OFFSET MAX_INPUT_STATES
 
 int32_t input_state[MAX_INPUT_STATES * 2];

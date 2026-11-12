@@ -8,6 +8,8 @@ set(BOARD nrf52dk_nrf52832 CACHE STRING "" FORCE)
 set(CONF_FILE ${CMAKE_CURRENT_LIST_DIR}/prj_tag.conf)
 
 add_compile_definitions(PERSISTED_CONFIG_SIZE=2048)
+# a single keyboard needs far fewer input states than the default 1024
+add_compile_definitions(MAX_INPUT_STATES=256)
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 include(${CMAKE_CURRENT_LIST_DIR}/gatt_dm_patch.cmake)
@@ -32,6 +34,5 @@ target_sources(app PRIVATE
 )
 
 # print the largest RAM consumers after linking (for fitting into 64 KB)
-add_custom_command(TARGET app POST_BUILD
-    COMMAND sh -c "echo RAMTOP_BEGIN; ${CMAKE_NM} -S --size-sort -r -C ${CMAKE_BINARY_DIR}/zephyr/zephyr_pre0.elf | grep -i ' [bBdD] ' | head -45; echo RAMTOP_END"
-    VERBATIM)
+set_property(GLOBAL APPEND PROPERTY extra_post_build_commands
+    COMMAND sh -c "echo RAMTOP_BEGIN; ${CMAKE_NM} -S --size-sort -r -C ${CMAKE_BINARY_DIR}/zephyr/zephyr.elf | grep -i ' [bBdD] ' | head -45; echo RAMTOP_END")
