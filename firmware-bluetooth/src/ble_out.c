@@ -280,9 +280,16 @@ void ble_out_forget_host(void) {
 
 static const uint8_t report_sizes_by_idx[2] = { KEYBOARD_REPORT_SIZE, CONSUMER_REPORT_SIZE };
 
+static void flush_work_fn(struct k_work* work);
+static K_WORK_DELAYABLE_DEFINE(flush_work, flush_work_fn);
+static K_MUTEX_DEFINE(send_mutex);
+
 static void notify_complete_cb(struct bt_conn* conn, void* user_data) {
     if (atomic_get(&in_flight) > 0) {
         atomic_dec(&in_flight);
+    }
+    if (pending[0] || pending[1]) {
+        k_work_reschedule(&flush_work, K_NO_WAIT);
     }
 }
 
@@ -305,10 +312,19 @@ void ble_out_poll(void) {
         return;
     }
 
+    k_mutex_lock(&send_mutex, K_FOREVER);
     for (uint8_t idx = 0; idx < 2; idx++) {
         if (pending[idx] && try_send(idx, pending_data[idx])) {
             pending[idx] = false;
         }
+    }
+    k_mutex_unlock(&send_mutex);
+}
+
+static void flush_work_fn(struct k_work* work) {
+    ble_out_poll();
+    if ((host_conn != NULL) && (pending[0] || pending[1])) {
+        k_work_reschedule(&flush_work, K_MSEC(5));
     }
 }
 
@@ -334,11 +350,14 @@ bool ble_out_send(uint8_t report_id, const uint8_t* data, uint8_t len) {
         return false;
     }
 
+    k_mutex_lock(&send_mutex, K_FOREVER);
     if (pending[idx] || !try_send(idx, data)) {
-        // keep only the latest state; it's sent from ble_out_poll()
+        // keep only the latest state; it's sent once there's room
         memcpy(pending_data[idx], data, len);
         pending[idx] = true;
+        k_work_reschedule(&flush_work, K_MSEC(5));
     }
+    k_mutex_unlock(&send_mutex);
 
     return true;
 }
