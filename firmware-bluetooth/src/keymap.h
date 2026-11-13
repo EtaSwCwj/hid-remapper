@@ -9,6 +9,7 @@
 #define CONSUMER(id) HID_USAGE(0x0C, id)
 
 // keyboard page usages
+#define K_3 0x20
 #define K_A 0x04
 #define K_D 0x07
 #define K_E 0x08
